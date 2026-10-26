@@ -1,0 +1,8 @@
+# Despliegue alternativo en Netlify (las cabeceras de seguridad y caché salen de dist/_headers).
+[build]
+  command = "python tools/check.py && python tools/build.py"
+  publish = "dist"
+
+[build.environment]
+  PYTHON_VERSION = "3.12"
+  NODE_VERSION = "20"

@@ -1,0 +1,233 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Stormdrop</title>
+<meta name="description" content="Battle royale 3D en el navegador: salta, saquea, construye y sé el último en pie.">
+<meta name="theme-color" content="#0b1430">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/+esm" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Rubik:ital,wght@0,400;0,500;0,700;0,800;1,800&display=swap">
+<link rel="stylesheet" href="css/style.css">
+
+<canvas id="game" aria-label="Vista del juego"></canvas>
+
+<div id="ui">
+  <!-- Carga -->
+  <section id="loading" class="screen">
+    <div class="load-wrap">
+      <div class="logo big">STORM<span>DROP</span></div>
+      <div class="load-bar"><i id="load-fill"></i></div>
+      <p id="load-text">Preparando la isla…</p>
+      <p class="tip" id="load-tip"></p>
+    </div>
+  </section>
+
+  <!-- Lobby -->
+  <section id="menu" class="screen" hidden>
+    <header class="topbar">
+      <div class="logo">STORM<span>DROP</span></div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="play" role="tab">Jugar</button>
+        <button class="tab" data-tab="locker" role="tab">Casillero</button>
+        <button class="tab" data-tab="settings" role="tab">Ajustes</button>
+        <button class="tab" data-tab="controls" role="tab">Controles</button>
+      </nav>
+      <div class="profile">
+        <label for="player-name" class="sr">Nombre</label>
+        <input id="player-name" maxlength="16" spellcheck="false" autocomplete="off">
+      </div>
+    </header>
+
+    <div class="panel" data-panel="play">
+      <aside class="stats-card">
+        <h3>Tu carrera</h3>
+        <dl id="career"></dl>
+      </aside>
+      <div class="play-card">
+        <div class="mode">
+          <span class="mode-tag" id="mode-tag">SOLO</span>
+          <h2>Isla Tormenta</h2>
+          <p id="mode-sub">25 jugadores · Construcción activada</p>
+        </div>
+        <div class="quick">
+          <label for="q-mode">Modo</label>
+          <select id="q-mode">
+            <option value="solo">Solo</option>
+            <option value="duo">Dúos</option>
+            <option value="squad">Escuadras</option>
+          </select>
+          <label for="q-bots">Rivales</label>
+          <select id="q-bots">
+            <option value="9">9 bots</option>
+            <option value="14">14 bots</option>
+            <option value="24">24 bots</option>
+            <option value="34">34 bots</option>
+            <option value="49">49 bots</option>
+          </select>
+          <label for="q-diff">Dificultad</label>
+          <select id="q-diff">
+            <option value="easy">Fácil</option>
+            <option value="normal">Normal</option>
+            <option value="hard">Difícil</option>
+          </select>
+        </div>
+        <button id="btn-play" class="cta">JUGAR</button>
+      </div>
+      <p class="hint-rotate">Arrastra para girar a tu personaje · clic para bailar</p>
+      <p class="version" id="version"></p>
+    </div>
+
+    <div class="panel" data-panel="locker" hidden>
+      <div class="locker">
+        <div class="sheet-head"><h2>Casillero</h2><button class="ghost back-tab" data-tab="play">Volver</button></div>
+        <p class="muted">Elige tu atuendo. Se guarda en este navegador.</p>
+        <div id="outfits" class="outfits"></div>
+      </div>
+    </div>
+
+    <div class="panel" data-panel="settings" hidden>
+      <div class="sheet"><div class="sheet-head"><h2>Ajustes</h2><button class="ghost back-tab" data-tab="play">Volver</button></div><div id="settings-menu"></div></div>
+    </div>
+
+    <div class="panel" data-panel="controls" hidden>
+      <div class="sheet"><div class="sheet-head"><h2>Controles</h2><button class="ghost back-tab" data-tab="play">Volver</button></div><div id="controls-list" class="keys"></div></div>
+    </div>
+  </section>
+
+  <!-- Emparejamiento -->
+  <section id="matchmaking" class="screen" hidden>
+    <div class="mm">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2>Buscando partida</h2>
+      <p><b id="mm-count">1</b> / <span id="mm-total">25</span> jugadores</p>
+      <button id="btn-cancel" class="ghost">Cancelar</button>
+    </div>
+  </section>
+
+  <!-- HUD -->
+  <section id="hud" hidden>
+    <div class="overlay storm-ov" id="ov-storm"></div>
+    <div class="overlay dmg-ov" id="ov-dmg"></div>
+    <div class="scope" id="scope" hidden><div class="scope-cross"></div></div>
+
+    <canvas id="compass" width="460" height="38"></canvas>
+    <div class="notify" id="notify"><h4 id="notify-title"></h4><p id="notify-sub"></p></div>
+
+    <div class="mini">
+      <canvas id="minimap" width="200" height="200"></canvas>
+      <div class="mini-info">
+        <span class="pill storm" title="Tormenta"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 5v5.4l3.6 2.1-.8 1.4L11 13V7z"/></svg><b id="storm-time">--:--</b></span>
+        <span class="pill" title="Jugadores vivos"><svg viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4.3 0-8 2.2-8 5v2h16v-2c0-2.8-3.7-5-8-5z"/></svg><b id="alive">25</b></span>
+        <span class="pill" title="Eliminaciones"><svg viewBox="0 0 24 24"><path d="M11 2h2v4h-2zM11 18h2v4h-2zM2 11h4v2H2zM18 11h4v2h-4zM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z"/></svg><b id="kills">0</b></span>
+      </div>
+      <div class="zone-msg" id="zone-msg"></div>
+    </div>
+
+    <ul class="feed" id="feed"></ul>
+    <ul class="team" id="team" hidden></ul>
+    <div class="sviz" id="sviz"></div>
+    <div class="warmup" id="warmup" hidden></div>
+    <div class="fps" id="fps" hidden></div>
+
+    <div class="crosshair" id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="dot"></i></div>
+    <div class="hitmarker" id="hitmarker"><i></i><i></i><i></i><i></i></div>
+    <div class="dmg-dirs" id="dmg-dirs"></div>
+    <div class="elim" id="elim"></div>
+
+    <div class="prompt" id="prompt" hidden>
+      <kbd id="prompt-key">E</kbd>
+      <div><span id="prompt-action"></span><b id="prompt-name"></b><small id="prompt-sub"></small></div>
+    </div>
+    <div class="channel" id="channel" hidden>
+      <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" class="bg"/><circle cx="32" cy="32" r="27" class="fg" id="channel-ring"/></svg>
+      <div class="ch-text"><b id="channel-time"></b><span id="channel-name"></span></div>
+    </div>
+    <div class="bus-hint" id="bus-hint" hidden><kbd>ESPACIO</kbd> Saltar del dirigible</div>
+    <div class="toast" id="toast"></div>
+    <ul class="pickups" id="pickups"></ul>
+
+    <div class="vitals">
+      <div class="who" id="who">Jugador</div>
+      <div class="bar shield"><b id="sh-num">0</b><div class="track"><i id="sh-fill"></i><em class="ticks"></em></div></div>
+      <div class="bar health"><b id="hp-num">100</b><div class="track"><i id="hp-fill"></i><em class="ticks"></em></div></div>
+    </div>
+
+    <div class="loadout">
+      <div class="ammo" id="ammo"><b id="ammo-mag">0</b><span id="ammo-res">0</span><small id="ammo-name"></small></div>
+      <div class="hotbar" id="hotbar"></div>
+      <div class="buildbar" id="buildbar" hidden></div>
+      <div class="mats" id="mats"></div>
+    </div>
+
+    <div class="spectate" id="spectate" hidden></div>
+    <div class="rotate-hint" id="rotate-hint"><b>Gira el dispositivo</b><span>Stormdrop se juega en horizontal</span></div>
+    <div id="touch" class="touch" hidden>
+      <div class="stick" id="stick"><i id="stick-knob"></i></div>
+      <button class="tbtn fire" data-act="fire" aria-label="Disparar"></button>
+      <button class="tbtn fire2" data-act="fire" aria-label="Disparar"></button>
+      <button class="tbtn aim" data-act="aim">ADS</button>
+      <button class="tbtn jump" data-act="jump">⤒</button>
+      <button class="tbtn crouch" data-act="crouch">⤓</button>
+      <button class="tbtn reload" data-act="reload">R</button>
+      <button class="tbtn use" data-act="interact" id="t-use">USAR</button>
+      <button class="tbtn build" data-act="buildToggle">⌂</button>
+      <button class="tbtn piece" data-act="wall">▮</button>
+      <button class="tbtn piece2" data-act="floor">▬</button>
+      <button class="tbtn piece3" data-act="ramp">◢</button>
+      <button class="tbtn piece4" data-act="roof">▲</button>
+      <button class="tbtn edit" data-act="edit">EDIT</button>
+      <button class="tbtn mat" data-act="matCycle">MAT</button>
+      <button class="tbtn map" data-act="map">MAPA</button>
+      <button class="tbtn pause" data-act="pause">II</button>
+    </div>
+  </section>
+  <div id="dmg-layer"></div>
+
+  <!-- Mapa grande -->
+  <section id="bigmap" hidden>
+    <div class="bigmap-wrap">
+      <canvas id="bigmap-canvas" width="900" height="900"></canvas>
+      <div class="legend"><span><i class="lg-you"></i>Tú</span><span><i class="lg-safe"></i>Zona segura</span><span><i class="lg-storm"></i>Tormenta</span><span><i class="lg-bus"></i>Ruta del dirigible</span><span>Clic: marcar destino · M: cerrar</span></div>
+    </div>
+  </section>
+
+  <!-- Pausa -->
+  <section id="pause" class="screen dim" hidden>
+    <div class="sheet pause-sheet">
+      <h2>Pausa</h2>
+      <div class="pause-actions" id="pause-main">
+        <button id="btn-resume" class="cta small">Continuar</button>
+        <button id="btn-psettings" class="ghost">Ajustes</button>
+        <button id="btn-pcontrols" class="ghost">Controles</button>
+        <button id="btn-leave" class="ghost danger">Abandonar partida</button>
+      </div>
+      <div id="pause-confirm" hidden>
+        <p>¿Seguro que quieres abandonar? Perderás el progreso de esta partida.</p>
+        <div class="row"><button id="btn-leave-yes" class="ghost danger">Sí, abandonar</button><button id="btn-leave-no" class="ghost">Volver</button></div>
+      </div>
+      <div id="pause-settings" hidden><div id="settings-pause"></div><button class="ghost back">Volver</button></div>
+      <div id="pause-controls" hidden><div class="keys" id="controls-pause"></div><button class="ghost back">Volver</button></div>
+      <p class="muted lock-note" id="lock-note" hidden>Tu navegador no permitió capturar el ratón. El juego sigue funcionando: mueve el ratón dentro de la ventana. Para la mejor experiencia abre el juego en una pestaña propia o a pantalla completa.</p>
+    </div>
+  </section>
+
+  <!-- Fin de partida -->
+  <section id="end" class="screen dim" hidden>
+    <div class="end">
+      <div class="place" id="end-place">#1</div>
+      <h1 id="end-title">¡VICTORIA!</h1>
+      <p id="end-sub"></p>
+      <div class="end-stats" id="end-stats"></div>
+      <div class="row">
+        <button id="btn-again" class="cta small">Jugar otra vez</button>
+        <button id="btn-lobby" class="ghost">Volver al lobby</button>
+        <button id="btn-spectate" class="ghost" hidden>Seguir mirando</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="fatal" class="screen" hidden><div class="sheet"><h2>No se puede iniciar el juego</h2><p id="fatal-msg"></p></div></div>
+  <div id="error-toast" hidden></div>
+</div>
+
+<script type="module" src="js/main.js"></script>
