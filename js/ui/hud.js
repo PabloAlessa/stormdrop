@@ -2,6 +2,9 @@
 // Sólo toca el DOM cuando un valor cambia (evita reflujos por fotograma).
 import { WEAPONS, CONSUMABLES, AMMO, RARITIES, MATERIALS, MAT_ORDER, MAP_SIZE, MAP_HALF, BUILD_COST } from '../config.js';
 import { formatTime, wrapAngle, clamp } from '../core/math.js';
+import * as THREE from '../lib/three.js';
+
+const _tag = new THREE.Vector3();
 
 export const ICONS = {
   ar: 'M3 29h30l4-4h15v4h9v5h-9v3h-7l-2 3H33l-4 10h-8l3-10h-5l-5 6H6l4-8H3z',
@@ -84,13 +87,55 @@ export class HUD {
     const pieces = [['wall', 'Q', 'Muro'], ['floor', 'Z', 'Suelo'], ['ramp', 'X', 'Rampa'], ['roof', 'V', 'Techo']];
     this.el.buildbar.innerHTML = pieces.map(([id, k, n]) => `<div class="slot" data-piece="${id}" title="${n}"><span class="key">${k}</span>${svg(ICONS[id])}<span class="cnt">${n}</span></div>`).join('');
     this.pieceEls = [...this.el.buildbar.children];
-    this.el.mats.innerHTML = MAT_ORDER.map((m) => `<div class="mat" data-mat="${m}">${svg(ICONS[m], MAT_COLORS[m])}<b>0</b></div>`).join('');
-    this.matEls = Object.fromEntries([...this.el.mats.children].map((el) => [el.dataset.mat, { el, b: el.querySelector('b'), v: -1 }]));
+    this.el.mats.innerHTML = MAT_ORDER.map((m) => `<div class="mat" data-mat="${m}">${svg(ICONS[m], MAT_COLORS[m])}<b>0</b></div>`).join('')
+      + '<div class="mat-hint">Clic der. · Tab · Rueda</div>';
+    // Etiquetas de nombre de los compañeros (visibles a través de las paredes)
+    this.tagsEl = document.createElement('div');
+    this.tagsEl.className = 'tags';
+    this.root.prepend(this.tagsEl);
+    this.tags = new Map();
+    this.matEls = Object.fromEntries([...this.el.mats.querySelectorAll('.mat')].map((el) => [el.dataset.mat, { el, b: el.querySelector('b'), v: -1 }]));
     // Selección táctil de ranuras
     this.el.hotbar.addEventListener('pointerdown', (e) => {
       const s = e.target.closest('.slot');
       if (s) this.game.input.tapVirtual('slot:' + s.dataset.slot);
     });
+  }
+
+  // Nombre, vida y escudo sobre cada compañero; distancia si está lejos; aviso si está derribado.
+  updateTags(me) {
+    const game = this.game, cam = game.camera;
+    const W = window.innerWidth, H = window.innerHeight;
+    const seen = new Set();
+    for (const c of game.characters) {
+      if (c === me || !c.alive || !me.isAlly(c) || c.mode === 'bus') continue;
+      seen.add(c);
+      let t = this.tags.get(c);
+      if (!t) {
+        const el = document.createElement('div');
+        el.className = 'tag';
+        el.innerHTML = '<b></b><i><s class="ts"></s><s class="th"></s></i><em></em>';
+        this.tagsEl.appendChild(el);
+        t = { el, name: el.querySelector('b'), sh: el.querySelector('.ts'), hp: el.querySelector('.th'), dist: el.querySelector('em'), k: '' };
+        t.name.textContent = c.name;
+        this.tags.set(c, t);
+      }
+      _tag.set(c.pos.x, c.pos.y + (c.downed ? 1.0 : c.height + 0.45), c.pos.z).project(cam);
+      const on = _tag.z < 1 && Math.abs(_tag.x) < 1.1 && Math.abs(_tag.y) < 1.1;
+      if (!on) { t.el.style.display = 'none'; continue; }
+      t.el.style.display = '';
+      t.el.style.transform = `translate(${((_tag.x + 1) / 2 * W).toFixed(1)}px, ${((1 - _tag.y) / 2 * H).toFixed(1)}px) translate(-50%, -100%)`;
+      const d = Math.round(c.pos.distanceTo(me.pos));
+      const k = `${Math.ceil(c.health)}|${Math.ceil(c.shield)}|${c.downed}|${d > 15 ? d : ''}`;
+      if (t.k !== k) {
+        t.k = k;
+        t.hp.style.width = `${c.downed ? Math.ceil(c.downHp || 0) : Math.ceil(c.health)}%`;
+        t.sh.style.width = `${c.downed ? 0 : Math.ceil(c.shield)}%`;
+        t.dist.textContent = c.downed ? 'DERRIBADO' + (d > 15 ? ` · ${d} m` : '') : d > 15 ? `${d} m` : '';
+        t.el.classList.toggle('down', !!c.downed);
+      }
+    }
+    for (const [c, t] of this.tags) if (!seen.has(c)) { t.el.remove(); this.tags.delete(c); }
   }
 
   // Visualización de sonido (accesibilidad): icono en la dirección del sonido alrededor de la mira.
@@ -436,6 +481,7 @@ export class HUD {
     if (!pc) return;
     const ch = pc.ch;
     const el = this.el;
+    this.updateTags(ch);
     // Vitales
     const hp = Math.ceil(ch.health), sh = Math.ceil(ch.shield);
     this.set('hp', el.hp, String(hp));
@@ -486,6 +532,7 @@ export class HUD {
       this.cache.build = ch.buildMode;
       el.hotbar.hidden = ch.buildMode;
       el.buildbar.hidden = !ch.buildMode;
+      el.mats.classList.toggle('building', ch.buildMode);
       el.crosshair.classList.toggle('build', ch.buildMode);
     }
     if (ch.buildMode) {

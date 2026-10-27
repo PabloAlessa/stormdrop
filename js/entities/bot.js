@@ -1,15 +1,20 @@
 // IA de bots: salto del autobús, aterrizaje en POIs, saqueo, combate con elección de arma, esquiva, curación,
-// muros de pánico, huida de la tormenta y detección de atascos.
+// muros de pánico y de cobertura, huida de la tormenta y detección de atascos.
+// Puntería: error angular que se corrige al rastrear, adelanto y caída para proyectiles, ráfagas y ritmo de tiro,
+// y comprobación de la línea de tiro (no dispara al terreno ni a aliados; rompe muros).
 import * as THREE from '../lib/three.js';
 import { WEAPONS, CONSUMABLES, WATER_LEVEL } from '../config.js';
 import { clamp, wrapAngle, dampAngle, RNG } from '../core/math.js';
 
+// aim: error angular (rad) ya asentado; settle: error extra al empezar a rastrear; turn: velocidad de giro;
+// lag: retraso de reacción ante blancos en movimiento (s); head: probabilidad de buscar la cabeza;
+// tap: cadencia de las semiautomáticas respecto al máximo; cover: probabilidad de construir cobertura al recargar.
 const DIFF = {
-  easy: { react: [0.8, 1.4], aim: 0.09, track: 0.6, sight: 80, panic: 0.1, burst: 0.45, heal: 0.4 },
-  normal: { react: [0.5, 1.0], aim: 0.065, track: 1.0, sight: 105, panic: 0.3, burst: 0.6, heal: 0.65 },
-  hard: { react: [0.25, 0.55], aim: 0.035, track: 1.3, sight: 140, panic: 0.55, burst: 0.85, heal: 0.8 },
+  easy: { react: [0.75, 1.3], aim: 0.055, settle: 2.2, turn: 6, lag: 0.16, head: 0.05, sight: 80, panic: 0.1, tap: 1.7, heal: 0.4, cover: 0.15 },
+  normal: { react: [0.45, 0.9], aim: 0.034, settle: 1.6, turn: 9, lag: 0.09, head: 0.15, sight: 105, panic: 0.3, tap: 1.3, heal: 0.65, cover: 0.4 },
+  hard: { react: [0.25, 0.5], aim: 0.02, settle: 1.1, turn: 13, lag: 0.04, head: 0.32, sight: 140, panic: 0.55, tap: 1.08, heal: 0.8, cover: 0.7 },
 };
-const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _p = new THREE.Vector3();
 let rngShared = new RNG(Date.now() & 0xffff);
 const game_state = (g) => g.state === 'warmup';
 
@@ -30,8 +35,13 @@ export class BotBrain {
     this.goal = null;
     this.strafeDir = 1; this.strafeT = 0;
     this.stuckT = 0; this.lastPos = new THREE.Vector3(); this.stuckCheck = 0;
-    this.aimErr = new THREE.Vector3();
-    this.errT = 0;
+    this.lastSeenVel = new THREE.Vector3();
+    this.errT = 0; this.errYaw = 0; this.errPitch = 0; this.errGoalYaw = 0; this.errGoalPitch = 0;
+    this.partT = 0; this.aimHead = false;
+    this.lof = 'clear'; this.lofT = 0;
+    this.tapT = 0; this.burstPause = 0; this.burstN = 0; this.burstStart = 0;
+    this.adsSince = 0; this.wasAds = false;
+    this.coverCd = 0; this.holdT = 0; this.holding = false;
     this.yawSm = 0; this.pitchSm = 0;
     this.lootTarget = null;
     this.ignoreLoot = new Set();
@@ -70,6 +80,7 @@ export class BotBrain {
 
   onDamaged(attacker, info) {
     if (!attacker || attacker === this.ch || !attacker.alive) return;
+    this.ch.lastDamagedT = this.time;
     if (!this.target || !this.target.alive || this.rng.chance(0.7)) {
       this.target = attacker;
       this.targetSeen = this.time;
@@ -77,20 +88,57 @@ export class BotBrain {
       if (this.firstSeen < this.time - 3) this.firstSeen = this.time - 0.2;
     }
     // Muro de pánico
-    const ch = this.ch;
-    if (this.panicCd <= 0 && ch.canAct && this.rng.chance(this.d.panic) && ch.inv.mats.wood + ch.inv.mats.stone >= 10) {
+    if (this.panicCd <= 0 && this.ch.canAct && this.rng.chance(this.d.panic)) {
       this.panicCd = 2.5;
-      const yaw = Math.atan2(attacker.pos.x - ch.pos.x, attacker.pos.z - ch.pos.z);
-      const mat = ch.inv.mats.stone >= 10 ? 'stone' : 'wood';
-      const b = this.game.build;
-      const pl = b.computePlacement(ch, yaw, 0, 'wall');
-      if (!pl.occupied) { b.place(pl, mat, ch); ch.placeT = 0.18; }
-      if (this.rng.chance(0.4)) {
-        const pr = b.computePlacement(ch, yaw, 0, 'ramp');
-        if (!pr.occupied) b.place(pr, mat, ch);
-      }
+      this.buildCover(attacker.pos, this.rng.chance(0.4));
     }
     void info;
+  }
+
+  // Muro (y opcionalmente rampa) entre el bot y una amenaza
+  buildCover(from, ramp = false) {
+    const ch = this.ch;
+    if (ch.inv.mats.wood + ch.inv.mats.stone < 10) return false;
+    const yaw = Math.atan2(from.x - ch.pos.x, from.z - ch.pos.z);
+    const mat = ch.inv.mats.stone >= 10 ? 'stone' : 'wood';
+    const b = this.game.build;
+    const pl = b.computePlacement(ch, yaw, 0, 'wall');
+    if (pl.occupied) return false;
+    b.place(pl, mat, ch); ch.placeT = 0.18;
+    if (ramp) {
+      const pr = b.computePlacement(ch, yaw, 0, 'ramp');
+      if (!pr.occupied) b.place(pr, mat, ch);
+    }
+    return true;
+  }
+
+  // ¿Qué hay entre el arma y el objetivo? clear | piece (estructura: se puede romper) | ally | blocked
+  lineOfFire(tgt) {
+    const ch = this.ch;
+    ch.eye(_a); tgt.chest(_b);
+    _c.subVectors(_b, _a);
+    const d = _c.length();
+    if (d < 0.01) return 'clear';
+    _c.divideScalar(d);
+    const r = this.game.combat.trace(ch, _a.x, _a.y, _a.z, _c.x, _c.y, _c.z, d + 0.5);
+    if (r.char) return r.char === tgt || !ch.isAlly(r.char) ? 'clear' : 'ally';
+    if (!r.hit || r.t > d - 0.4) return 'clear';
+    if (r.collider && r.collider.piece) return 'piece';
+    return 'blocked';
+  }
+
+  // Inclinación para lanzar una granada a una distancia horizontal hd con desnivel dy (simulación del arco)
+  throwPitch(hd, dy) {
+    let best = 0.3, bestE = Infinity;
+    for (let p = -0.3; p <= 1.0; p += 0.04) {
+      const vx = Math.cos(p) * 22, vy = Math.sin(p) * 22 + 4.5;
+      const disc = vy * vy - 40 * dy;
+      if (disc < 0) continue;
+      const t = (vy + Math.sqrt(disc)) / 20;
+      const e = Math.abs(vx * t - hd * 0.85);
+      if (e < bestE) { bestE = e; best = p; }
+    }
+    return best;
   }
 
   hear(shooter, pos) {
@@ -107,13 +155,16 @@ export class BotBrain {
   canSee(other, maxD) {
     const ch = this.ch;
     ch.eye(_a);
-    other.chest(_b);
-    _c.subVectors(_b, _a);
-    const d = _c.length();
-    if (d > maxD || d < 0.01) return false;
-    _c.divideScalar(d);
-    const h = this.game.physics.raycast(_a.x, _a.y, _a.z, _c.x, _c.y, _c.z, d - 0.5);
-    return !h.hit;
+    for (let k = 0; k < 2; k++) {
+      if (k === 0) other.chest(_b); else other.eye(_b);
+      _c.subVectors(_b, _a);
+      const d = _c.length();
+      if (d > maxD || d < 0.01) return false;
+      _c.divideScalar(d);
+      const h = this.game.physics.raycast(_a.x, _a.y, _a.z, _c.x, _c.y, _c.z, d - 0.5);
+      if (!h.hit) return true;
+    }
+    return false;
   }
 
   scan() {
@@ -127,20 +178,26 @@ export class BotBrain {
       const dx = o.pos.x - ch.pos.x, dz = o.pos.z - ch.pos.z;
       const d = Math.hypot(dx, dz);
       if (d > sight) continue;
-      // Entre bots sólo se enfrentan a media distancia: ritmo de partida más largo y justo para el jugador
-      if (!o.isPlayer && d > 42) continue;
+      // Entre bots sólo se enfrentan a media distancia (menos aún si la partida va por delante de su ritmo)
+      if (!o.isPlayer && d > (playerSide(this.game, o) || playerSide(this.game, ch) ? 42 : pacing(this.game).engage)) continue;
       const facing = (dx * fx + dz * fz) / Math.max(0.01, d);
       if (facing < -0.2 && d > 12) continue; // fuera del campo de visión
       // Los jugadores en arbustos/agachados son algo más difíciles de ver
       const vis = o.crouch ? 0.75 : 1;
       if (d > sight * vis) continue;
-      cand.push([d, o]);
+      let score = d;
+      if (o === ch.lastDamager && this.time - (ch.lastDamagedT ?? this.time - 9) < 4) score -= 25;
+      if (o === this.target) score -= 10;
+      if (o.downed) score -= 6;
+      else if (o.health + o.shield < 60) score -= 8;
+      cand.push([score, o]);
     }
     cand.sort((a, b) => a[0] - b[0]);
-    for (let i = 0; i < Math.min(3, cand.length); i++) {
-      const [d, o] = cand[i];
-      if (this.canSee(o, sight)) { if (d < bestD) { bestD = d; best = o; } break; }
+    for (let i = 0; i < Math.min(4, cand.length); i++) {
+      const o = cand[i][1];
+      if (this.canSee(o, sight)) { best = o; break; }
     }
+    void bestD;
     return best;
   }
 
@@ -207,10 +264,11 @@ export class BotBrain {
     return false;
   }
 
+  // Zona a la que dirigirse: la siguiente en cuanto el tiempo restante no da para llegar corriendo con margen
   safeTarget() {
-    const st = this.game.storm;
-    const c = st.stage === 'shrink' || st.timer < 25 ? st.next : st.cur;
-    return c;
+    const st = this.game.storm, ch = this.ch;
+    const far = Math.max(0, Math.hypot(ch.pos.x - st.next.x, ch.pos.z - st.next.z) - st.next.r * 0.75);
+    return st.stage === 'shrink' || st.timer < 20 + far / 5 ? st.next : st.cur;
   }
 
   update(dt) {
@@ -218,6 +276,7 @@ export class BotBrain {
     const I = ch.intent;
     this.time += dt;
     this.panicCd -= dt;
+    this.coverCd -= dt;
     if (!ch.alive) return;
     I.jumpPressed = false; I.crouchPressed = false; I.firePressed = false; I.reloadPressed = false;
     const game = this.game;
@@ -291,6 +350,7 @@ export class BotBrain {
       this.target = seen;
       this.targetSeen = this.time;
       this.lastSeenPos.copy(seen.pos);
+      this.lastSeenVel.copy(seen.vel);
     }
     if (this.target && (!this.target.alive || this.time - this.targetSeen > 6)) this.target = null;
 
@@ -329,6 +389,8 @@ export class BotBrain {
       this.target = this.time - this.targetSeen > 1.5 ? null : this.target;
       return;
     }
+    // Dentro de la tormenta con poca vida: salir de ella manda sobre la pelea
+    if (inStorm && (hpTotal < 70 || (game.storm.phase ?? 0) >= 3)) { this.state = 'storm'; this.goal = new THREE.Vector3(safe.x, 0, safe.z); return; }
     // Sin armas sólo pelea cuerpo a cuerpo si le atacan de cerca; si no, prioriza saquear.
     const armed = ch.inv.weaponCount() > 0;
     const tgtDist = this.target ? this.target.pos.distanceTo(ch.pos) : Infinity;
@@ -445,15 +507,6 @@ export class BotBrain {
     }
     if (!ch.canAct) { I.mx = 0; I.mz = 0; return; }
 
-    const lookAt = (x, y, z, rate = 6) => {
-      ch.eye(I.aimOrigin);
-      const dx = x - I.aimOrigin.x, dy = y - I.aimOrigin.y, dz = z - I.aimOrigin.z;
-      const yaw = Math.atan2(dx, dz);
-      const pitch = Math.atan2(dy, Math.hypot(dx, dz));
-      I.aimYaw = dampAngle(I.aimYaw, yaw, rate, dt);
-      I.aimPitch += (pitch - I.aimPitch) * (1 - Math.exp(-rate * dt));
-      I.aimDir.set(Math.sin(I.aimYaw) * Math.cos(I.aimPitch), Math.sin(I.aimPitch), Math.cos(I.aimYaw) * Math.cos(I.aimPitch));
-    };
     const faceMove = () => {
       if (Math.hypot(I.mx, I.mz) > 0.1) {
         I.aimYaw = dampAngle(I.aimYaw, Math.atan2(I.mx, I.mz), 6, dt);
@@ -486,46 +539,111 @@ export class BotBrain {
       case 'fight': {
         const tgt = this.target;
         if (!tgt || !tgt.alive) { this.state = 'roam'; break; }
+        const D = this.d;
         const visible = this.time - this.targetSeen < 0.5;
         const dist = tgt.pos.distanceTo(ch.pos);
         const it = ch.inv.cur();
         const def = it && it.kind === 'weapon' ? WEAPONS[it.id] : null;
-        // Error de puntería que se reduce mientras rastrea
+        // Punto de mira: pecho o cabeza; con cohetes, los pies (daño en área)
+        if (this.time >= this.partT) { this.partT = this.time + this.rng.range(1, 2.5); this.aimHead = this.rng.chance(D.head); }
+        const since = this.time - this.targetSeen;
+        if (visible) _p.copy(tgt.pos);
+        else _p.copy(this.lastSeenPos).addScaledVector(this.lastSeenVel, Math.min(since, 1.2)); // posición prevista
+        _p.y += def && def.explosive ? 0.25 : this.aimHead && !tgt.downed ? tgt.height - 0.2 : tgt.downed ? 0.35 : tgt.height * 0.6;
+        if (visible && def) {
+          if (def.projectile) {
+            // Adelanto según el tiempo de vuelo y compensación de la caída de la bala
+            const tof = dist / def.speed;
+            _p.addScaledVector(tgt.vel, tof);
+            _p.y += 0.5 * (def.drop || 0) * tof * tof;
+          } else _p.addScaledVector(tgt.vel, -D.lag); // como una persona, va un poco por detrás del blanco
+        }
+        // Error angular: grande al empezar a rastrear, se corrige con el tiempo; peor si el blanco corre o salta
         this.errT -= dt;
         if (this.errT <= 0) {
-          this.errT = 0.35 + this.rng.next() * 0.3;
-          const spread = this.d.aim * (1 + dist * 0.012) * (tgt.sprinting ? 1.4 : 1) * (1 + Math.max(0, 1.2 - (this.time - this.firstSeen)) * this.d.track);
-          this.aimErr.set(this.rng.range(-1, 1), this.rng.range(-0.6, 0.6), this.rng.range(-1, 1)).multiplyScalar(spread * dist);
+          this.errT = this.rng.range(0.25, 0.5);
+          const tracking = this.time - this.firstSeen;
+          const k = D.aim * (1 + Math.max(0, 1 - tracking / 1.4) * D.settle)
+            * (tgt.sprinting ? 1.35 : 1) * (tgt.onGround ? 1 : 1.3) * (Math.hypot(ch.vel.x, ch.vel.z) > 2 ? 1.15 : 1);
+          const tri = () => (this.rng.range(-1, 1) + this.rng.range(-1, 1)) * 0.8;
+          this.errGoalYaw = tri() * k; this.errGoalPitch = tri() * k * 0.6;
         }
-        const aimY = this.rng.chance(0.01) ? 0 : tgt.height * (this.d === DIFF.hard ? 0.78 : 0.62);
-        const tx = (visible ? tgt.pos.x : this.lastSeenPos.x) + this.aimErr.x;
-        const ty = (visible ? tgt.pos.y : this.lastSeenPos.y) + aimY + this.aimErr.y;
-        const tz = (visible ? tgt.pos.z : this.lastSeenPos.z) + this.aimErr.z;
-        lookAt(tx, ty, tz, 9);
-        // Distancia preferida según el arma
-        const pref = !def ? 2 : def.id === 'shotgun' ? 5 : def.id === 'smg' ? 11 : def.id === 'sniper' ? 70 : def.id === 'pistol' ? 15 : 28;
+        const ek = 1 - Math.exp(-5 * dt);
+        this.errYaw += (this.errGoalYaw - this.errYaw) * ek;
+        this.errPitch += (this.errGoalPitch - this.errPitch) * ek;
+        ch.eye(I.aimOrigin);
+        const dx = _p.x - I.aimOrigin.x, dy = _p.y - I.aimOrigin.y, dz = _p.z - I.aimOrigin.z;
+        const hd = Math.hypot(dx, dz);
+        const wantYaw = Math.atan2(dx, dz) + this.errYaw;
+        const wantPitch = (def && def.throwable ? this.throwPitch(hd, dy) : Math.atan2(dy, hd)) + this.errPitch;
+        I.aimYaw = dampAngle(I.aimYaw, wantYaw, D.turn, dt);
+        I.aimPitch += (wantPitch - I.aimPitch) * (1 - Math.exp(-D.turn * dt));
+        I.aimDir.set(Math.sin(I.aimYaw) * Math.cos(I.aimPitch), Math.sin(I.aimPitch), Math.cos(I.aimYaw) * Math.cos(I.aimPitch));
+        // Línea de tiro (10 veces por segundo)
+        this.lofT -= dt;
+        if (this.lofT <= 0) { this.lofT = 0.1; this.lof = this.lineOfFire(tgt); }
+        // Movimiento: distancia preferida del arma, esquiva lateral irregular, quieto y agachado al disparar de lejos
+        const pref = !def ? 2 : def.id === 'shotgun' || def.id === 'tactical' ? 5 : def.id === 'smg' ? 11 : def.id === 'sniper' ? 70 : def.id === 'scoped' ? 45 : def.id === 'pistol' ? 15 : 28;
         this.strafeT -= dt;
-        if (this.strafeT <= 0) { this.strafeT = this.rng.range(0.6, 1.6); this.strafeDir = this.rng.sign(); if (this.rng.chance(0.25)) I.jumpPressed = true; }
+        if (this.strafeT <= 0) {
+          this.strafeT = this.rng.range(0.35, 1.1);
+          if (this.rng.chance(0.75)) this.strafeDir = -this.strafeDir;
+          if (dist < 20 && this.rng.chance(0.18)) I.jumpPressed = true;
+        }
+        const precise = def && (def.id === 'ar' || def.scoped || def.id === 'sniper' || def.id === 'handcannon' || def.id === 'pistol');
+        this.holdT -= dt;
+        if (this.holdT <= 0) { this.holding = !this.holding; this.holdT = this.holding ? this.rng.range(1.0, 2.2) : this.rng.range(0.5, 1.0); }
+        const still = visible && precise && dist > 30 && this.holding && !ch.reloading;
+        this.crouchT -= dt;
+        if (this.crouchT <= 0 && still !== ch.crouch && !ch.sliding) { I.crouchPressed = true; this.crouchT = 0.6; }
         const yaw = Math.atan2(tgt.pos.x - ch.pos.x, tgt.pos.z - ch.pos.z);
         let fwd = dist > pref * 1.3 ? 1 : dist < pref * 0.6 ? -0.7 : 0;
-        if (!visible) fwd = 1;
-        const side = this.strafeDir * (visible ? 0.85 : 0.2);
-        const mx = Math.sin(yaw) * fwd + Math.cos(yaw) * -side;
-        const mz = Math.cos(yaw) * fwd - Math.sin(yaw) * -side;
-        if (!visible) this.steer(this.lastSeenPos.x, this.lastSeenPos.z);
-        else { const l = Math.max(1, Math.hypot(mx, mz)); I.mx = mx / l; I.mz = mz / l; }
-        // Disparo
-        const aimedErr = Math.abs(wrapAngle(I.aimYaw - Math.atan2(tx - ch.pos.x, tz - ch.pos.z)));
-        if (visible && this.time - this.firstSeen > this.reaction && aimedErr < 0.12) {
-          if (def) {
-            I.aim = dist > 14 && def.id !== 'shotgun';
-            if (def.auto) I.fire = this.rng.next() < this.d.burst;
-            else I.firePressed = ch.cooldown <= 0 && this.rng.next() < 0.5;
-            if (dist > def.range * 0.9) { I.fire = false; I.firePressed = false; }
-          } else if (dist < 2.4) I.fire = true;
+        if (ch.reloading && visible) fwd = -0.6;
+        const side = still ? 0 : this.strafeDir * (visible ? 0.85 : 0.2);
+        // Cobertura al recargar con el rival a la vista
+        if (ch.reloading && visible && dist < 45 && this.coverCd <= 0) {
+          this.coverCd = 4;
+          if (this.rng.chance(D.cover)) this.buildCover(tgt.pos, dist < 15 && this.rng.chance(0.5));
+        }
+        const breakWall = !visible && this.lof === 'piece' && since < 2.5 && dist < 30;
+        if (!visible && !breakWall) this.steer(_p.x, _p.z);
+        else if (still || breakWall) { I.mx = 0; I.mz = 0; }
+        else {
+          const mx = Math.sin(yaw) * fwd + Math.cos(yaw) * -side;
+          const mz = Math.cos(yaw) * fwd - Math.sin(yaw) * -side;
+          const l = Math.max(1, Math.hypot(mx, mz)); I.mx = mx / l; I.mz = mz / l;
+        }
+        // Disparo: tras el tiempo de reacción, con la mira asentada y la línea de tiro despejada
+        const devYaw = Math.abs(wrapAngle(I.aimYaw - wantYaw)), devPitch = Math.abs(I.aimPitch - wantPitch);
+        const onAim = Math.hypot(devYaw, devPitch) < Math.atan2(0.5, Math.max(dist, 1)) + 0.015;
+        const ready = this.time - this.firstSeen > this.reaction;
+        const wantAds = !!def && visible && !def.throwable && (def.scoped || (dist > 12 && def.id !== 'shotgun' && def.id !== 'tactical'));
+        I.aim = wantAds;
+        if (wantAds && !this.wasAds) this.adsSince = this.time;
+        this.wasAds = wantAds;
+        let shoot = ready && onAim && (visible ? this.lof === 'clear' : breakWall);
+        if (def && dist > def.range * 0.9) shoot = false;
+        if (!def) { if (visible && dist < 2.4) I.fire = true; }
+        else if (def.throwable) {
+          if (shoot && visible && dist > 8 && dist < 28 && this.time >= this.tapT) { I.firePressed = true; this.tapT = this.time + this.rng.range(2, 4); }
+        } else if (shoot && !(def.scoped && this.time - this.adsSince < 0.45)) {
+          if (def.auto) {
+            // Fuego continuo de cerca; ráfagas cortas a media y larga distancia para controlar la dispersión
+            if (dist < 14) I.fire = true;
+            else if (this.time >= this.burstPause) {
+              if (this.burstN <= 0) { this.burstN = Math.round(this.rng.range(3, dist > 40 ? 4 : 7)); this.burstStart = ch.stats.shots; }
+              I.fire = true;
+              if (ch.stats.shots - this.burstStart >= this.burstN) {
+                this.burstN = 0; I.fire = false;
+                this.burstPause = this.time + this.rng.range(0.2, 0.4) * (dist > 40 ? 1.6 : 1);
+              }
+            }
+          } else if (this.time >= this.tapT && ch.cooldown <= 0) {
+            I.firePressed = true;
+            this.tapT = this.time + (1 / def.rate) * D.tap * this.rng.range(0.9, 1.25) + (dist > 50 ? 0.15 : 0);
+          }
         }
         if (it && it.kind === 'weapon' && it.ammoIn === 0) I.reloadPressed = true;
-        if (this.rng.chance(dt * 0.3)) I.crouchPressed = true;
         break;
       }
       case 'loot': {
@@ -563,5 +681,24 @@ export class BotBrain {
     I.moveFwd = 0;
   }
 }
+
+// Ritmo de bajas: compara los vivos con una curva objetivo (partida de ≈16 min) y, si los bots se eliminan entre
+// ellos demasiado rápido, reduce su daño mutuo y la distancia a la que se buscan pelea. Al jugador no le afecta.
+const PACING = { dmg: 0.6, engage: 40 };
+export function pacing(game) {
+  const t = game.matchTime || 0;
+  if (game._pacingT === Math.floor(t) && game._pacing) return game._pacing;
+  game._pacingT = Math.floor(t);
+  if (!game.characters || !game.characters.length) return PACING;
+  const frac = game.aliveCount() / game.characters.length;
+  const x = clamp((t - 40) / 900, 0, 1);
+  const target = Math.max(0.08, 1 - 0.88 * x ** 1.5);
+  const k = clamp(0.5 + (frac - target) * 8, 0, 1); // 0 = van muy por delante de la curva
+  // Muy por delante: no se buscan entre ellos (sólo se defienden) y apenas se hacen daño
+  game._pacing = { dmg: 0.12 + 0.58 * k, engage: k < 0.15 ? 0 : 42 * k };
+  return game._pacing;
+}
+// ¿Está en el bando del jugador (él o sus compañeros)?
+export const playerSide = (game, c) => !!c && (c.isPlayer || (game.playerChar && game.playerChar.team !== undefined && c.team === game.playerChar.team));
 
 export function resetBotRng() { rngShared = new RNG(Date.now() & 0xffff); return rngShared; }

@@ -168,10 +168,12 @@ export class PlayerController {
       } else game.hud.toast('Mira una pieza construida para editarla');
     }
     if (!ch.buildMode) { B.hideGhost(); return; }
-    if (input.aimPressed() || input.virtualPressed.has('matCycle')) {
+    const step = input.aimPressed() || input.hit('matCycle') || input.virtualPressed.has('matCycle') ? 1 : Math.sign(input.wheel);
+    if (step) {
       const i = MAT_ORDER.indexOf(ch.buildMat);
-      ch.buildMat = MAT_ORDER[(i + 1) % MAT_ORDER.length];
+      ch.buildMat = MAT_ORDER[(i + step + MAT_ORDER.length) % MAT_ORDER.length];
       game.audio.play('uiclick');
+      game.hud.toast(`Material: ${MATERIALS[ch.buildMat].name} (${ch.inv.mats[ch.buildMat]})`);
     }
     if (input.hit('reload')) ch.buildRot = (ch.buildRot + 1) % 4;
     const pl = B.computePlacement(ch, this.yaw, this.pitch, ch.buildPiece, ch.buildRot);

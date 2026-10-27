@@ -199,7 +199,8 @@ function toLobby() {
   game.bus.stop();
   game.bus.group.visible = false;
   game.audio.stopAllLoops();
-  game.windLoop = null; game.stormLoop = null; game.oceanLoop = null;
+  game.windLoop = null; game.stormLoop = null; game.oceanLoop = null; game.tensionLoop = null;
+  game.audio.setDanger(0);
   if (game.audio.ready) game.audio.startMusic('lobby');
   game.lobby.setOutfit(settings.outfit);
 }
@@ -291,6 +292,7 @@ function setupMatch() {
   game.windLoop = game.audio.loop('wind');
   game.stormLoop = game.audio.loop('storm');
   game.oceanLoop = game.audio.loop('ocean');
+  game.tensionLoop = game.audio.loop('tension');
   game.ambT = 3;
   game.telemetry.event('match_start', { mode: game.modeDef.id, players: game.characters.length, difficulty: settings.difficulty, quality: settings.quality });
   game.hud.notify('Isla previa', `Practica: el dirigible sale en ${WARMUP_TIME} s · ${game.characters.length} jugadores · ${game.modeDef.name}`, '');
@@ -487,6 +489,8 @@ game.pause = () => {
   game.menu.showPause(game.input.lockFailed);
   if (game.windLoop) game.windLoop.setGain(0, 0.05);
   if (game.stormLoop) game.stormLoop.setGain(0, 0.05);
+  if (game.tensionLoop) game.tensionLoop.setGain(0, 0.05);
+  game.audio.setDanger(0);
 };
 game.resume = () => {
   if (!game.paused) return;
@@ -637,6 +641,7 @@ function updateLoops(dt) {
     }
     game.oceanLoop.setGain(Math.min(0.5, coast * 0.09) * (1 - game.stormAmount), 0.8);
   }
+  updateTension(dt, pc);
   game.ambT = (game.ambT || 0) - dt;
   if (game.ambT <= 0 && pc.alive && pc.mode === 'ground') {
     game.ambT = 3 + Math.random() * 6;
@@ -649,6 +654,39 @@ function updateLoops(dt) {
       game.audio.play('bird', _amb.set(pc.pos.x + Math.cos(a) * r, pc.pos.y + 6 + Math.random() * 8, pc.pos.z + Math.sin(a) * r), { far: 60, vol: 0.8 });
     }
   }
+}
+
+// Tensión: con poca vida el mundo suena apagado y se oye el latido; un zumbido grave crece cuando un rival
+// cercano te tiene localizado (aunque no lo veas) y en el final de la partida.
+function updateTension(dt, pc) {
+  const alive = pc.alive && !pc.downed && game.state === 'play';
+  const hp = pc.health;
+  const danger = alive ? clamp((35 - hp) / 30, 0, 1) : pc.downed ? 0.85 : 0;
+  game.audio.setDanger(danger * 0.8);
+  game.beatT = (game.beatT || 0) - dt;
+  if ((danger > 0 || pc.downed) && game.beatT <= 0) {
+    game.beatT = 1.05 - danger * 0.4;
+    game.audio.play('heartbeat', null, { vol: 0.5 + danger * 0.5 });
+  }
+  game.threatT = (game.threatT || 0) - dt;
+  if (game.threatT <= 0) {
+    game.threatT = 0.25;
+    let threat = 0;
+    if (alive) {
+      for (const b of game.bots) {
+        if (!b.alive || !b.brain || pc.isAlly(b)) continue;
+        const d = b.pos.distanceTo(pc.pos);
+        if (d > 45) continue;
+        const br = b.brain;
+        const hunting = br.target === pc || br.heardFrom === pc;
+        threat = Math.max(threat, (hunting ? 1 : 0.35) * (1 - d / 45));
+      }
+      const left = game.aliveCount();
+      if (left <= 10) threat = Math.max(threat, 0.25 + (10 - left) * 0.04);
+    }
+    game.threat = threat;
+  }
+  if (game.tensionLoop) game.tensionLoop.setGain(Math.min(0.75, game.threat || 0) * (game.paused ? 0 : 1), 0.9);
 }
 
 // Utilidad de depuración: avanzar la simulación manualmente (p. ej. desde la consola o pruebas automáticas).

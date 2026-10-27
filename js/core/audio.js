@@ -54,17 +54,19 @@ function drive(c, d, amount = 3) {
   ws.connect(d);
   return ws;
 }
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
 function bus(c, d, gain = 1) { const g = c.createGain(); g.gain.value = gain; g.connect(d); return g; }
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
 // ---------- Recetas: (contexto, destino, tiempo, aleatorio, opciones) → duración ----------
+// El chasquido va en banda (no ruido agudo puro) y la saturación es suave: más pegada y menos fatiga auditiva.
 const gun = (c, d, t, r, p) => {
   const k = 0.92 + r() * 0.16;
-  N(c, d, t, { dur: p.crack, type: 'highpass', f: p.crackF * k, gain: p.crackG });
-  const dr = drive(c, d, p.drive);
-  N(c, dr, t, { dur: p.body, type: 'bandpass', f: p.bodyF * k, q: 0.8, gain: p.bodyG });
-  O(c, dr, t, { f: p.punch * k, f1: p.punch * 0.3, dur: p.punchD, gain: p.punchG });
-  if (p.mech) O(c, d, t + 0.012, { type: 'square', f: 2300 * k, dur: 0.018, gain: 0.05 });
+  N(c, d, t, { dur: p.crack, type: 'bandpass', f: p.crackF * 0.7 * k, q: 0.7, gain: p.crackG * 0.5 });
+  const dr = drive(c, d, p.drive * 0.55);
+  N(c, dr, t, { dur: p.body, type: 'bandpass', f: p.bodyF * 0.7 * k, q: 0.7, gain: p.bodyG * 0.9 });
+  O(c, dr, t, { f: p.punch * k, f1: p.punch * 0.3, dur: p.punchD * 1.2, gain: p.punchG * 1.15 });
+  if (p.mech) O(c, d, t + 0.012, { type: 'triangle', f: 1600 * k, dur: 0.018, gain: 0.04 });
   N(c, d, t + 0.015, { dur: p.tail, type: 'lowpass', f: p.tailF, f1: 150, gain: p.tailG, attack: 0.02 });
   if (p.echo) for (const [dt, gg] of p.echo) N(c, d, t + dt, { dur: 0.35, type: 'lowpass', f: 700, f1: 160, gain: gg, attack: 0.03 });
   return p.len;
@@ -74,13 +76,13 @@ const R = {
   smg: { v: 3, len: 0.6, fn: (c, d, t, r) => gun(c, d, t, r, { crack: 0.02, crackF: 4200, crackG: 0.65, body: 0.085, bodyF: 1700, bodyG: 0.8, drive: 2.5, punch: 230, punchD: 0.06, punchG: 0.6, mech: true, tail: 0.38, tailF: 1200, tailG: 0.15, len: 0.6 }) },
   pistol: { v: 3, len: 0.7, fn: (c, d, t, r) => { gun(c, d, t, r, { crack: 0.025, crackF: 3600, crackG: 0.7, body: 0.11, bodyF: 1350, bodyG: 0.85, drive: 2.5, punch: 210, punchD: 0.09, punchG: 0.7, tail: 0.45, tailF: 1000, tailG: 0.18, len: 0.7 }); N(c, d, t + 0.05, { dur: 0.02, type: 'bandpass', f: 3500, q: 4, gain: 0.12 }); return 0.7; } },
   shotgun: { v: 3, len: 1.4, fn: (c, d, t, r) => { gun(c, d, t, r, { crack: 0.045, crackF: 2500, crackG: 1.0, body: 0.28, bodyF: 720, bodyG: 1.2, drive: 4, punch: 115, punchD: 0.25, punchG: 1.2, tail: 1.0, tailF: 700, tailG: 0.32, len: 1.4 }); N(c, d, t, { dur: 0.4, type: 'lowpass', f: 320, gain: 0.5 }); return 1.4; } },
-  sniper: { v: 2, len: 2.2, fn: (c, d, t, r) => { O(c, d, t, { f: 5200, f1: 3000, dur: 0.02, gain: 0.35 }); return gun(c, d, t, r, { crack: 0.05, crackF: 2000, crackG: 1.2, body: 0.3, bodyF: 900, bodyG: 1.2, drive: 5, punch: 125, punchD: 0.35, punchG: 1.3, tail: 1.5, tailF: 900, tailG: 0.38, echo: [[0.42, 0.16], [0.85, 0.08]], len: 2.2 }); } },
+  sniper: { v: 2, len: 2.2, fn: (c, d, t, r) => { O(c, d, t, { f: 3200, f1: 2000, dur: 0.02, gain: 0.15 }); return gun(c, d, t, r, { crack: 0.05, crackF: 2000, crackG: 1.2, body: 0.3, bodyF: 900, bodyG: 1.2, drive: 5, punch: 125, punchD: 0.35, punchG: 1.3, tail: 1.5, tailF: 900, tailG: 0.38, echo: [[0.42, 0.16], [0.85, 0.08]], len: 2.2 }); } },
   explosion: { v: 3, len: 3.0, fn: (c, d, t, r) => {
     const dr = drive(c, d, 4);
     O(c, dr, t, { f: 90 + r() * 20, f1: 28, dur: 0.6, gain: 1.3 });
     N(c, dr, t, { dur: 0.5, type: 'lowpass', f: 2200, f1: 180, gain: 1.2 });
-    N(c, d, t, { dur: 0.05, type: 'highpass', f: 2000, gain: 0.6 });
-    for (let i = 0; i < 8; i++) N(c, d, t + 0.1 + r() * 0.6, { dur: 0.03, type: 'bandpass', f: 1500 + r() * 2500, q: 2, gain: 0.15 });
+    N(c, d, t, { dur: 0.05, type: 'bandpass', f: 1600, gain: 0.35 });
+    for (let i = 0; i < 8; i++) N(c, d, t + 0.1 + r() * 0.6, { dur: 0.03, type: 'bandpass', f: 1200 + r() * 1800, q: 2, gain: 0.1 });
     N(c, d, t + 0.1, { dur: 2.2, type: 'lowpass', f: 600, f1: 80, gain: 0.4, attack: 0.05 });
     return 3.0;
   } },
@@ -125,6 +127,7 @@ const R = {
   headshot: { v: 1, len: 0.45, fn: (c, d, t) => { O(c, d, t, { f: 2637, dur: 0.3, gain: 0.2 }); O(c, d, t, { f: 3520, dur: 0.22, gain: 0.1 }); O(c, d, t, { f: 5274, dur: 0.12, gain: 0.04 }); return 0.45; } },
   shieldhit: { v: 2, len: 0.2, fn: (c, d, t) => { N(c, d, t, { dur: 0.08, type: 'highpass', f: 4200, gain: 0.35 }); O(c, d, t, { f: 2800, f1: 4200, dur: 0.08, gain: 0.08 }); return 0.2; } },
   shieldbreak: { v: 1, len: 0.7, fn: (c, d, t, r) => { for (let i = 0; i < 12; i++) O(c, d, t + r() * 0.12, { type: 'triangle', f: 2000 + r() * 3200, dur: 0.12 + r() * 0.15, gain: 0.07 }); N(c, d, t, { dur: 0.35, type: 'highpass', f: 3500, gain: 0.4 }); O(c, d, t, { f: 900, f1: 300, dur: 0.3, gain: 0.12 }); return 0.7; } },
+  heartbeat: { v: 1, len: 0.5, fn: (c, d, t) => { O(c, d, t, { f: 62, f1: 38, dur: 0.12, gain: 0.9 }); O(c, d, t + 0.17, { f: 55, f1: 34, dur: 0.14, gain: 0.6 }); N(c, d, t, { dur: 0.08, type: 'lowpass', f: 180, gain: 0.25 }); return 0.5; } },
   hurt: { v: 2, len: 0.3, fn: (c, d, t) => { O(c, d, t, { f: 170, f1: 60, dur: 0.16, gain: 0.5 }); N(c, d, t, { dur: 0.1, type: 'lowpass', f: 700, gain: 0.3 }); return 0.3; } },
   elim: { v: 1, len: 1.0, fn: (c, d, t) => { [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => { O(c, d, t + i * 0.065, { type: 'triangle', f, dur: 0.35, gain: 0.18 }); O(c, d, t + i * 0.065, { f: f * 2, dur: 0.25, gain: 0.05 }); }); N(c, d, t, { dur: 0.3, type: 'highpass', f: 6000, gain: 0.08 }); return 1.0; } },
   death: { v: 1, len: 1.2, fn: (c, d, t, r) => { O(c, d, t, { type: 'sawtooth', f: 440, f1: 55, dur: 0.7, gain: 0.16 }); for (let i = 0; i < 10; i++) O(c, d, t + 0.2 + r() * 0.6, { f: 1500 + r() * 2500, dur: 0.08, gain: 0.05 }); N(c, d, t, { dur: 0.6, type: 'bandpass', f: 1800, f1: 300, gain: 0.2 }); return 1.2; } },
@@ -285,13 +288,19 @@ export class AudioSys {
     try { this.ctx = new AC({ latencyHint: 'interactive' }); } catch { return; }
     const ctx = this.ctx;
     this.master = ctx.createGain();
+    const eq = (type, f, gain, q = 0.7) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.gain.value = gain; b.Q.value = q; return b; };
+    this.eqLow = eq('lowshelf', 140, 2.5);
+    this.eqMid = eq('peaking', 2900, -4, 0.9);   // zona de "presencia" que cansa el oído
+    this.eqHigh = eq('highshelf', 6000, -6);
+    this.duck = eq('lowpass', 20000, 0, 0.5);    // se cierra con poca vida (sonido apagado)
     this.comp = ctx.createDynamicsCompressor();
-    this.comp.threshold.value = -16; this.comp.knee.value = 12; this.comp.ratio.value = 5;
-    this.comp.attack.value = 0.004; this.comp.release.value = 0.22;
+    this.comp.threshold.value = -20; this.comp.knee.value = 18; this.comp.ratio.value = 2.5;
+    this.comp.attack.value = 0.015; this.comp.release.value = 0.3;
     this.limiter = ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -2; this.limiter.knee.value = 0; this.limiter.ratio.value = 20;
-    this.limiter.attack.value = 0.001; this.limiter.release.value = 0.08;
-    this.master.connect(this.comp).connect(this.limiter).connect(ctx.destination);
+    this.limiter.threshold.value = -3; this.limiter.knee.value = 2; this.limiter.ratio.value = 12;
+    this.limiter.attack.value = 0.002; this.limiter.release.value = 0.12;
+    this.master.connect(this.eqLow).connect(this.eqMid).connect(this.eqHigh).connect(this.duck)
+      .connect(this.comp).connect(this.limiter).connect(ctx.destination);
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = makeIR(ctx);
     this.revOut = bus(ctx, this.master, 0.55);
@@ -334,6 +343,12 @@ export class AudioSys {
       l.setPosition(p.x, p.y, p.z);
       l.setOrientation(fx, fy, fz, ux, uy, uz);
     }
+  }
+
+  // 0 = normal, 1 = al borde de la muerte: el mundo suena lejano y apagado
+  setDanger(k) {
+    if (!this.ready) return;
+    this.duck.frequency.setTargetAtTime(18000 * Math.pow(0.05, clamp01(k)), this.ctx.currentTime, 0.25);
   }
 
   dist(pos) {
@@ -508,6 +523,19 @@ export class AudioSys {
       lfo(0.09, 0.45, g.gain);
       lfo(0.07, 250, f.frequency);
       out._filter = f;
+    } else if (kind === 'tension') {
+      const sum = ctx.createGain(); sum.gain.value = 0.5;
+      for (const [fq, gg] of [[55, 0.32], [58.3, 0.28], [82.4, 0.08]]) {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = fq;
+        const g = ctx.createGain(); g.gain.value = gg;
+        o.connect(g).connect(sum); o.start(t); nodes.push(o);
+      }
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 420; f.Q.value = 1.4;
+      const ng = ctx.createGain(); ng.gain.value = 0.12;
+      noiseSrc().connect(f).connect(ng).connect(sum);
+      lfo(0.18, 0.1, ng.gain);
+      lfo(0.07, 120, f.frequency);
+      sum.connect(out);
     } else if (kind === 'chest') {
       const freqs = [523.25, 659.25, 783.99, 1046.5];
       const sum = ctx.createGain(); sum.gain.value = 0.5;

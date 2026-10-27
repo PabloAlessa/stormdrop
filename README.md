@@ -12,6 +12,19 @@ Todos los modelos, animaciones, texturas, sonidos y música se generan por códi
 En [docs/](docs/README.md) está la documentación base del battle royale de referencia (2017–2018): visión, objetivos, alcance,
 requisitos funcionales y no funcionales, diseño de juego, arquitectura técnica, riesgos y una comparativa con Stormdrop.
 
+## Novedades 1.3.0
+
+- **Disparo**: cajas de impacto animadas (cabeza, torso y piernas siguen al modelo: agachado, derribado, nadando),
+  patrón fijo de perdigones en escopetas y búfer de clic para semiautomáticas.
+- **Bots**: puntería que se corrige al rastrear, adelanto y caída de bala, ráfagas y ritmo de tiro, comprobación de la línea
+  de tiro, muros de cobertura al recargar, rotación a tiempo con la tormenta y mejor elección de objetivo.
+- **Ritmo de partida**: un director regula las bajas entre bots para seguir una curva de ≈16 minutos (antes casi todos
+  morían en 4 minutos).
+- **Tensión**: pasos enemigos audibles a más distancia, tiroteos lejanos por todo el mapa, latido y sonido apagado con
+  poca vida y un zumbido grave cuando un rival cercano te busca o quedan pocos.
+- **Audio** menos agresivo: ecualización general, compresión suave y disparos más graves.
+- Nombres, vida y escudo sobre los compañeros; cambio de material con clic derecho, Tab o rueda, con aviso.
+
 ## Novedades 1.2.0
 
 - **Post-procesado nuevo**: oclusión ambiental en pantalla, rayos de sol, contornos suaves, dispersión atmosférica hacia el sol,

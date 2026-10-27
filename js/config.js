@@ -1,6 +1,6 @@
 // Configuración central del juego: constantes, base de datos de objetos, atuendos y fases de tormenta.
 export const GAME_NAME = 'STORMDROP';
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 
 export const CELL = 5;          // ancho de celda de construcción (m)
 export const WALL_H = 4;        // altura de un piso de construcción (m)
@@ -165,7 +165,7 @@ export function randomBotName(rng) {
 }
 
 export const KEY_LABELS = [
-  ['Moverse', 'W A S D'], ['Mirar', 'Ratón'], ['Disparar / Colocar', 'Clic izq.'], ['Apuntar / Cambiar material', 'Clic der.'],
+  ['Moverse', 'W A S D'], ['Mirar', 'Ratón'], ['Disparar / Colocar', 'Clic izq.'], ['Apuntar', 'Clic der.'], ['Cambiar material (construyendo)', 'Clic der. / Tab / Rueda'],
   ['Saltar / Desplegar planeador', 'Espacio'], ['Esprintar', 'Shift'], ['Agacharse / Deslizarse', 'C'],
   ['Recargar / Rotar pieza', 'R'], ['Interactuar / Recoger', 'E'], ['Pico', '1 o F'], ['Ranuras de armas', '2 – 6 / Rueda'],
   ['Muro', 'Q'], ['Suelo', 'Z'], ['Rampa', 'X'], ['Techo', 'V'], ['Editar pieza (mirándola)', 'T'], ['Reanimar compañero (mantener)', 'E'],

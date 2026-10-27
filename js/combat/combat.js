@@ -3,6 +3,7 @@
 import * as THREE from '../lib/three.js';
 import { WATER_LEVEL } from '../config.js';
 import { clamp } from '../core/math.js';
+import { pacing, playerSide } from '../entities/bot.js';
 
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _m = new THREE.Vector3(), _p = new THREE.Vector3(), _t = new THREE.Vector3();
 const _u = new THREE.Vector3(), _w = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
@@ -73,7 +74,7 @@ export class Combat {
       const blocked = game.physics.raycast(pos.x, pos.y + 0.1, pos.z, _d.x, _d.y, _d.z, Math.max(0, d - 0.4));
       if (blocked.hit) continue;
       const dmg = Math.round(def.dmg[0] * (1 - 0.7 * (d / R)));
-      const type = c.takeDamage(dmg, shooter, { type: 'explosion', weapon: def.id, from: pos.clone() });
+      const type = c.takeDamage(Math.round(dmg * this.botScale(shooter, c)), shooter, { type: 'explosion', weapon: def.id, from: pos.clone() });
       if (type && shooter) shooter.stats.damage += dmg;
       if (type && shooter && shooter.isPlayer && c !== shooter) { game.effects.damageNumber(cp, dmg, type); game.hud.hitmarker(false); }
     }
@@ -142,8 +143,22 @@ export class Combat {
 
   cone(dir, angle, out) {
     if (angle <= 1e-5) return out.copy(dir);
-    const a = angle * Math.sqrt(Math.random());
-    const az = Math.random() * Math.PI * 2;
+    return this.coneAt(dir, angle * Math.sqrt(Math.random()), Math.random() * Math.PI * 2, out);
+  }
+
+  // Patrón fijo de perdigones (centro + anillo interior + anillo exterior) con giro aleatorio y poca variación:
+  // a la misma distancia y puntería, el daño es consistente.
+  pellet(dir, i, n, spread, rot, out) {
+    if (i === 0) return this.cone(dir, spread * 0.1, out);
+    const inner = Math.min(4, n - 1);
+    const outer = i > inner;
+    const k = outer ? n - 1 - inner : inner;
+    const j = outer ? i - 1 - inner : i - 1;
+    const az = rot + (j / k) * Math.PI * 2 + (outer ? Math.PI / k : 0) + (Math.random() - 0.5) * 0.4;
+    return this.coneAt(dir, spread * (outer ? 0.85 : 0.42) * (0.88 + Math.random() * 0.24), az, out);
+  }
+
+  coneAt(dir, a, az, out) {
     _u.crossVectors(dir, Math.abs(dir.y) > 0.95 ? _w.set(1, 0, 0) : _up).normalize();
     _w.crossVectors(dir, _u).normalize();
     const ta = Math.tan(a);
@@ -160,8 +175,9 @@ export class Combat {
     const pellets = def.pellets || 1;
     const dmgBase = def.dmg[item.rarity];
     let anyHit = false, anyHead = false, totalDmg = 0, lastPoint = null, lastType = 'health';
+    const rot = Math.random() * Math.PI * 2;
     for (let i = 0; i < pellets; i++) {
-      const dir = this.cone(I.aimDir, pellets > 1 ? spread * (0.35 + 0.65 * Math.random()) : spread, _d);
+      const dir = pellets > 1 ? this.pellet(I.aimDir, i, pellets, spread, rot, _d) : this.cone(I.aimDir, spread, _d);
       // 1) Desde la cámara/ojos hasta el punto apuntado
       const t1 = this.trace(ch, I.aimOrigin.x, I.aimOrigin.y, I.aimOrigin.z, dir.x, dir.y, dir.z, def.range);
       _t.set(t1.x, t1.y, t1.z);
@@ -194,10 +210,17 @@ export class Combat {
     if (anyHead) ch.stats.headshots++;
     // Efectos del disparo
     game.effects.muzzle(muzzle, _d.copy(I.aimDir), def.id === 'shotgun' || def.id === 'sniper', ch.isPlayer || game.audio.dist(muzzle) < 60);
-    game.audio.play(def.id, ch.isPlayer ? null : muzzle.clone(), { far: def.id === 'sniper' ? 400 : 180, ref: 10, vol: ch.isPlayer ? 0.85 : 1 });
+    game.audio.play(def.id, ch.isPlayer ? null : muzzle.clone(), { far: def.id === 'sniper' ? 520 : 330, ref: 10, vol: ch.isPlayer ? 0.85 : 1 });
     if (ch.isPlayer) game.player.onFire(def);
     // Los bots oyen los disparos
     for (const b of game.bots) if (b.alive && b !== ch && b.brain) b.brain.hear(ch, muzzle);
+  }
+
+  // Daño entre bots ajenos al jugador según el ritmo de la partida (1 si interviene el bando del jugador)
+  botScale(shooter, target) {
+    const g = this.game;
+    if (!shooter || shooter === target || playerSide(g, shooter) || playerSide(g, target)) return 1;
+    return pacing(g).dmg;
   }
 
   // Aplica el impacto de un rayo. Devuelve info si dio a un personaje.
@@ -206,7 +229,7 @@ export class Combat {
     if (h.char) {
       const target = h.char;
       if (h.head) dmg *= def.head;
-      dmg = Math.round(dmg);
+      dmg = Math.round(dmg * this.botScale(ch, target));
       const type = target.takeDamage(dmg, ch, { type: 'bullet', weapon: def.id, head: h.head, from: ch.pos });
       ch.stats.damage += dmg;
       const point = new THREE.Vector3(h.x, h.y, h.z);
@@ -261,9 +284,10 @@ export class Combat {
     const point = new THREE.Vector3(h.x, h.y, h.z);
     const hitObj = { x: h.x, y: h.y, z: h.z, nx: h.nx, ny: h.ny, nz: h.nz };
     if (h.char) {
-      const type = h.char.takeDamage(20, ch, { type: 'melee', weapon: 'pickaxe', from: ch.pos });
-      ch.stats.damage += 20;
-      if (ch.isPlayer) { game.effects.damageNumber(point, 20, type === 'shield' ? 'shield' : 'health'); game.hud.hitmarker(false); game.audio.play('hitmarker'); }
+      const md = Math.round(20 * this.botScale(ch, h.char));
+      const type = h.char.takeDamage(md, ch, { type: 'melee', weapon: 'pickaxe', from: ch.pos });
+      ch.stats.damage += md;
+      if (ch.isPlayer) { game.effects.damageNumber(point, md, type === 'shield' ? 'shield' : 'health'); game.hud.hitmarker(false); game.audio.play('hitmarker'); }
       game.audio.play('hitwood', point, { far: 30 });
       return;
     }

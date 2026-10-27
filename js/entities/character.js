@@ -9,6 +9,40 @@ const STAND_H = 1.85, CROUCH_H = 1.25, SLIDE_H = 1.0;
 const JUMP_V = 8.3;
 const _v = new THREE.Vector3();
 
+// Intersección rayo-esfera (dirección unitaria). Devuelve t >= 0 o -1; 0 si el origen está dentro.
+function raySphere(ox, oy, oz, dx, dy, dz, c, r) {
+  const px = ox - c.x, py = oy - c.y, pz = oz - c.z;
+  const b = px * dx + py * dy + pz * dz;
+  const cc = px * px + py * py + pz * pz - r * r;
+  if (cc <= 0) return 0;
+  const h = b * b - cc;
+  if (h < 0) return -1;
+  const t = -b - Math.sqrt(h);
+  return t >= 0 ? t : -1;
+}
+// Intersección rayo-cápsula (segmento a-b, radio r).
+function rayCapsule(ox, oy, oz, dx, dy, dz, a, b, r) {
+  const bax = b.x - a.x, bay = b.y - a.y, baz = b.z - a.z;
+  const oax = ox - a.x, oay = oy - a.y, oaz = oz - a.z;
+  const baba = bax * bax + bay * bay + baz * baz;
+  const bard = bax * dx + bay * dy + baz * dz;
+  const baoa = bax * oax + bay * oay + baz * oaz;
+  const rdoa = dx * oax + dy * oay + dz * oaz;
+  const oaoa = oax * oax + oay * oay + oaz * oaz;
+  const A = baba - bard * bard, B = baba * rdoa - baoa * bard, C = baba * oaoa - baoa * baoa - r * r * baba;
+  const h = B * B - A * C;
+  if (h >= 0 && A > 1e-9) {
+    const t = (-B - Math.sqrt(h)) / A;
+    const y = baoa + t * bard;
+    if (y > 0 && y < baba) return t >= 0 ? t : (C <= 0 ? 0 : -1);
+  }
+  // Extremos esféricos
+  const t1 = raySphere(ox, oy, oz, dx, dy, dz, a, r), t2 = raySphere(ox, oy, oz, dx, dy, dz, b, r);
+  if (t1 < 0) return t2;
+  if (t2 < 0) return t1;
+  return Math.min(t1, t2);
+}
+
 export class Inventory {
   constructor() { this.reset(); }
   reset() {
@@ -137,14 +171,47 @@ export class Character {
   get canAct() { return this.alive && !this.downed && (this.mode === 'ground') && !this.mantle && !this.emote; }
   isAlly(o) { return !!o && o !== this && this.team !== undefined && o.team === this.team; }
 
-  // Impacto de rayo contra cápsula de cuerpo + esfera de cabeza.
+  // Cajas de impacto animadas: esfera de cabeza y cápsulas de torso y piernas tomadas de los huesos del modelo,
+  // así coinciden con lo que se ve (agachado, deslizándose, derribado, escalando, en caída libre).
+  hitbox() {
+    const hb = this._hb || (this._hb = { t: -1, head: new THREE.Vector3(), hip: new THREE.Vector3(), neck: new THREE.Vector3(), feet: new THREE.Vector3(), _k: new THREE.Vector3() });
+    if (hb.t === this.time) return hb;
+    hb.t = this.time;
+    const m = this.model;
+    m.root.updateWorldMatrix(true, true);
+    m.head.localToWorld(hb.head.set(0, 0.135, 0.01));
+    m.hips.getWorldPosition(hb.hip);
+    m.neck.getWorldPosition(hb.neck);
+    hb.neck.lerp(hb.hip, 0.15); // el extremo del torso queda bajo la barbilla
+    m.legL.kn.localToWorld(hb.feet.set(0, -0.42, 0));
+    m.legR.kn.localToWorld(hb._k.set(0, -0.42, 0));
+    hb.feet.add(hb._k).multiplyScalar(0.5);
+    return hb;
+  }
+
   rayHit(ox, oy, oz, dx, dy, dz, maxT) {
     if (!this.alive || this.mode === 'bus') return null;
+    // Lejos del jugador el modelo no se anima: se usa la caja simple
+    if (!this.model.root.visible) return this.rayHitSimple(ox, oy, oz, dx, dy, dz, maxT);
+    const hb = this.hitbox();
+    const flying = this.mode === 'skydive' || this.mode === 'glide';
+    let best = maxT, head = false;
+    const th = raySphere(ox, oy, oz, dx, dy, dz, hb.head, flying ? 0.3 : 0.21);
+    if (th >= 0 && th < best) { best = th; head = true; }
+    const tb = rayCapsule(ox, oy, oz, dx, dy, dz, hb.hip, hb.neck, flying ? 0.42 : 0.31);
+    if (tb >= 0 && tb < best) { best = tb; head = false; }
+    const tl = rayCapsule(ox, oy, oz, dx, dy, dz, hb.hip, hb.feet, 0.22);
+    if (tl >= 0 && tl < best) { best = tl; head = false; }
+    return best < maxT ? { t: best, head } : null;
+  }
+
+  // Caja analítica (personajes lejanos sin animar)
+  rayHitSimple(ox, oy, oz, dx, dy, dz, maxT) {
     let best = maxT, head = false, found = false;
     const flying = this.mode === 'skydive' || this.mode === 'glide';
-    const headY = this.pos.y + (flying ? 1.2 : this.height - 0.2);
+    const low = this.downed ? 0.55 : 0;
+    const headY = this.pos.y + (flying ? 1.2 : this.height - 0.2 - (this.downed ? 1.1 : 0));
     const headR = flying ? 0.35 : 0.24;
-    // Cabeza
     {
       const px = ox - this.pos.x, py = oy - headY, pz = oz - this.pos.z;
       const b = px * dx + py * dy + pz * dz;
@@ -155,8 +222,7 @@ export class Character {
         if (t >= 0 && t < best) { best = t; head = true; found = true; }
       }
     }
-    // Cuerpo: cilindro vertical
-    const r = flying ? 0.6 : 0.36;
+    const r = flying ? 0.6 : 0.36 + low;
     const y0 = this.pos.y + (flying ? 0.4 : 0.05), y1 = headY - headR * 0.8;
     const px = ox - this.pos.x, pz = oz - this.pos.z;
     const a = dx * dx + dz * dz;
@@ -445,11 +511,11 @@ export class Character {
   onStep() {
     if (!this.onGround) return;
     const d = this.game.audio.dist(this.pos);
-    if (!this.isPlayer && d > 38) return;
+    if (!this.isPlayer && d > 50) return;
     const c = this.groundCollider;
     const surface = c ? (c.surface || (c.dest && c.dest.mat) || 'grass') : 'grass';
-    const vol = this.crouch ? 0.25 : this.sprinting ? 0.9 : 0.6;
-    this.game.audio.play('step', this.isPlayer ? null : this.pos, { surface, vol: this.isPlayer ? vol * 0.55 : vol, far: 30 });
+    const vol = this.crouch ? 0.25 : this.sprinting ? 1.0 : 0.7;
+    this.game.audio.play('step', this.isPlayer ? null : this.pos, { surface, vol: this.isPlayer ? vol * 0.5 : vol * 1.25, far: 42, ref: 9 });
     if (this.sprinting && Math.random() < 0.35) this.game.effects.dust(this.pos, 2, 0.25);
   }
 
@@ -769,7 +835,10 @@ export class Character {
       }
       return;
     }
-    const want = def.auto ? I.fire : I.firePressed;
+    // Búfer de clic: un disparo pedido hasta 0,15 s antes de que el arma esté lista se ejecuta al estarlo
+    if (I.firePressed && !def.auto) this.fireQueuedT = this.time;
+    const queued = !def.auto && this.time - (this.fireQueuedT ?? -9) < 0.15;
+    const want = def.auto ? I.fire : I.firePressed || queued;
     if (want && this.cooldown <= 0 && this.equipT <= 0) {
       if (it.ammoIn > 0) {
         this.game.combat.fire(this, it, def);
@@ -777,6 +846,7 @@ export class Character {
         this.cooldown = 1 / def.rate;
         this.kick = 1;
         this.lastShot = this.time;
+        this.fireQueuedT = -9;
         this.bloom = Math.min(def.bloomMax, this.bloom + def.bloomPer);
         this.fireBlockSprint = 0.45;
         this.sprinting = false;

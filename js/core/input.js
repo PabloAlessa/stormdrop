@@ -17,6 +17,7 @@ const BINDS = {
   ramp: ['KeyX', 'F3'],
   roof: ['KeyV', 'F4'],
   edit: ['KeyT'],
+  matCycle: ['Tab'],
   drop: ['KeyG'],
   emote: ['KeyB'],
   map: ['KeyM'],
