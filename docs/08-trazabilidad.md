@@ -82,7 +82,7 @@ Estado de cada requisito de [03 · Requisitos funcionales](03-requisitos-funcion
 |---|---|---|
 | RNF-REN-01 | ✅ | 60 FPS en PC de escritorio (≈8–10 ms por fotograma medidos); calidad baja para equipos modestos |
 | RNF-REN-02 | 🟡 | Sin pruebas en el hardware mínimo de referencia |
-| RNF-REN-03 | ✅ | Cuatro preajustes: resolución, sombras, post-procesado, hierba y distancia |
+| RNF-REN-03 | ✅ | Cuatro preajustes: resolución, sombras, post-procesado (oclusión ambiental en Alta y Épica, rayos de sol desde Media), hierba y distancia (`render/renderer.js`) |
 | RNF-REN-04 | ✅ | Instanciado por bloques, recorte por distancia, LOD de personajes y de animación |
 | RNF-REN-05 | ✅ | Carga completa en ≈5–6 s |
 | RNF-REN-06 | 🟡 | Memoria no medida en móviles de 3 GB |

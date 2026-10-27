@@ -41,6 +41,7 @@ export class Sky {
   constructor(scene, renderer) {
     this.scene = scene;
     this.sunDir = new THREE.Vector3(-0.45, 0.78, 0.42).normalize();
+    scene.userData.sunDir = this.sunDir; // rayos de sol y dispersión del post-procesado
     const mat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.clone(SkyShader.uniforms),
       vertexShader: SkyShader.vertexShader,

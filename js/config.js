@@ -1,6 +1,6 @@
 // Configuración central del juego: constantes, base de datos de objetos, atuendos y fases de tormenta.
 export const GAME_NAME = 'STORMDROP';
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 
 export const CELL = 5;          // ancho de celda de construcción (m)
 export const WALL_H = 4;        // altura de un piso de construcción (m)
@@ -144,7 +144,7 @@ export const OUTFITS = [
   { name: 'Mecánica', skin: 0xffdbac, hair: 0xb5482b, top: 0xf28c28, accent: 0x2d3142, pants: 0x2d3142, shoes: 0x4f3b2a, gloves: 0x2d3142, hairStyle: 'pony', pack: 'pack', sleeves: 'short' },
   { name: 'Agente Cobalto', skin: 0xc68642, hair: 0x1b1b1b, top: 0x1f3a93, accent: 0xffd166, pants: 0x161c2c, shoes: 0x0d0f16, gloves: 0x0d0f16, hairStyle: 'helmet', pack: 'tank', sleeves: 'long' },
   { name: 'Surfista', skin: 0xf1c27d, hair: 0xf7d774, top: 0x2ec4b6, accent: 0xff6b6b, pants: 0xff9f1c, shoes: 0xffffff, gloves: 0xf1c27d, hairStyle: 'spiky', pack: 'none', sleeves: 'short' },
-  { name: 'Guardabosques', skin: 0x8d5524, hair: 0x2b1a0e, top: 0x6b8e23, accent: 0x8b5a2b, pants: 0x4b3a26, shoes: 0x2a1d12, gloves: 0x4b3a26, hairStyle: 'cap', pack: 'pack', sleeves: 'long' },
+  { name: 'Guardabosques', skin: 0x8d5524, hair: 0x2b1a0e, top: 0x6b8e23, accent: 0xd9a441, pants: 0x4b3a26, shoes: 0x2a1d12, gloves: 0x4b3a26, hairStyle: 'cap', pack: 'pack', sleeves: 'long' },
   { name: 'Piloto Carmesí', skin: 0xffdbac, hair: 0x3b2314, top: 0xc0392b, accent: 0xf5f5f5, pants: 0x2c2c34, shoes: 0x111111, gloves: 0xf5f5f5, hairStyle: 'helmet', pack: 'wings', sleeves: 'long' },
   { name: 'Recluta', skin: 0xe0ac69, hair: 0x4a3222, top: 0x7d8c6a, accent: 0xc2b280, pants: 0x55604a, shoes: 0x2f2a22, gloves: 0x55604a, hairStyle: 'short', pack: 'none', sleeves: 'short' },
   { name: 'Lila Eléctrica', skin: 0xf1c27d, hair: 0x9b5de5, top: 0xf15bb5, accent: 0xfee440, pants: 0x00bbf9, shoes: 0xfee440, gloves: 0x9b5de5, hairStyle: 'pony', pack: 'tank', sleeves: 'short' },

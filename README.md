@@ -12,6 +12,13 @@ Todos los modelos, animaciones, texturas, sonidos y música se generan por códi
 En [docs/](docs/README.md) está la documentación base del battle royale de referencia (2017–2018): visión, objetivos, alcance,
 requisitos funcionales y no funcionales, diseño de juego, arquitectura técnica, riesgos y una comparativa con Stormdrop.
 
+## Novedades 1.2.0
+
+- **Post-procesado nuevo**: oclusión ambiental en pantalla, rayos de sol, contornos suaves, dispersión atmosférica hacia el sol,
+  tonemapping ACES propio con gradación (vibrancia, sombras frías y luces cálidas), nitidez adaptativa, grano de película y aberración de lente.
+- **Cabezas esculpidas**: cráneo con mandíbula, mentón, pómulos y arco ciliar; ojos con párpado y pestañas, nariz y labios nuevos.
+  El pelo y los gorros se ciñen a esa forma.
+
 ## Novedades 1.1.0
 
 - Modos **Dúos** y **Escuadras** con compañeros bot, derribo, arrastre, reanimación y sin fuego amigo.
@@ -83,8 +90,8 @@ Ctrl no se usa a propósito: Ctrl+W cierra la pestaña y el navegador no deja bl
 - **Animación procedural** de todas las acciones: reposo, caminar, correr con giro de cadera, agacharse, deslizarse, saltar, caer, aterrizar,
   escalar, nadar, caída libre, planeo, pico, recarga, corredera/cerrojo, cambio de arma, curarse (vendas/poción/botiquín), construir,
   baile, celebración de victoria, impacto y muerte con desintegración. Las manos sujetan cada arma con IK de dos huesos.
-- **Post-procesado**: tone mapping ACES, bloom, gradación de color, viñeta, tinte de tormenta, viñeta de daño con aberración cromática,
-  FXAA, sombras suaves estabilizadas (sin parpadeo), niebla atmosférica, cielo y reflejos de entorno coherentes.
+- **Post-procesado**: oclusión ambiental (Alta y Épica), rayos de sol, contornos, dispersión atmosférica, tone mapping ACES, bloom,
+  gradación de color, nitidez, grano, viñeta, tinte de tormenta, viñeta de daño con aberración cromática, FXAA, sombras suaves estabilizadas (sin parpadeo), niebla atmosférica, cielo y reflejos de entorno coherentes.
 - **IA de bots**: eligen dónde caer repartiéndose, saquean cofres y suelo, eligen arma por distancia, se mueven lateralmente, saltan,
   se agachan, se retiran a curarse, oyen disparos, huyen de la tormenta, esquivan agua y obstáculos, y detectan cuando se atascan.
 - **HUD**: vida/escudo, inventario con rareza, munición, materiales, minimapa con zona y ruta, brújula, mapa grande con marcador,
