@@ -1,6 +1,6 @@
 // Configuración central del juego: constantes, base de datos de objetos, atuendos y fases de tormenta.
 export const GAME_NAME = 'STORMDROP';
-export const VERSION = '1.3.0';
+export const VERSION = '1.3.1';
 
 export const CELL = 5;          // ancho de celda de construcción (m)
 export const WALL_H = 4;        // altura de un piso de construcción (m)

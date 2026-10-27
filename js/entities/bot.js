@@ -392,10 +392,17 @@ export class BotBrain {
     // Dentro de la tormenta con poca vida: salir de ella manda sobre la pelea
     if (inStorm && (hpTotal < 70 || (game.storm.phase ?? 0) >= 3)) { this.state = 'storm'; this.goal = new THREE.Vector3(safe.x, 0, safe.z); return; }
     // Sin armas sólo pelea cuerpo a cuerpo si le atacan de cerca; si no, prioriza saquear.
-    const armed = ch.inv.weaponCount() > 0;
     const tgtDist = this.target ? this.target.pos.distanceTo(ch.pos) : Infinity;
-    const meleeOk = !armed && tgtDist < 6 && this.target === ch.lastDamager && this.time - this.targetSeen < 1.5;
-    if (this.target && this.target.alive && (armed || meleeOk) && (this.time - this.targetSeen < 2.5 || hpTotal > 60)) {
+    const canShoot = ch.inv.weaponCount() > 0 && this.pickWeapon(tgtDist) > 0;
+    // Sin nada con qué disparar sólo se defiende a pico si le están pegando ahora mismo; si no, se aparta a buscar botín
+    const meleeOk = !canShoot && tgtDist < 5 && this.target === ch.lastDamager && this.time - (ch.lastDamagedT ?? -9) < 1.5;
+    if (this.target && this.target.alive && !canShoot && !meleeOk && tgtDist < 25 && this.time - this.targetSeen < 1.5) {
+      const ax = ch.pos.x - this.target.pos.x, az = ch.pos.z - this.target.pos.z, l = Math.hypot(ax, az) || 1;
+      this.state = 'flee';
+      this.goal = new THREE.Vector3(ch.pos.x + (ax / l) * 25, 0, ch.pos.z + (az / l) * 25);
+      return;
+    }
+    if (this.target && this.target.alive && (canShoot || meleeOk) && (this.time - this.targetSeen < 2.5 || hpTotal > 60)) {
       this.state = 'fight';
       const dist = this.target.pos.distanceTo(ch.pos);
       const slot = this.pickWeapon(dist);
@@ -692,10 +699,10 @@ export function pacing(game) {
   if (!game.characters || !game.characters.length) return PACING;
   const frac = game.aliveCount() / game.characters.length;
   const x = clamp((t - 40) / 900, 0, 1);
-  const target = Math.max(0.08, 1 - 0.88 * x ** 1.5);
-  const k = clamp(0.5 + (frac - target) * 8, 0, 1); // 0 = van muy por delante de la curva
-  // Muy por delante: no se buscan entre ellos (sólo se defienden) y apenas se hacen daño
-  game._pacing = { dmg: 0.12 + 0.58 * k, engage: k < 0.15 ? 0 : 42 * k };
+  const target = Math.max(0.08, 1 - 0.9 * x ** 1.2);
+  const k = clamp(0.5 + (frac - target) * 5, 0, 1); // 0 = van por delante de la curva
+  // Siempre se pelean entre ellos; si van rápido, a menos distancia y con menos daño (peleas más largas)
+  game._pacing = { dmg: 0.22 + 0.58 * k, engage: 20 + 22 * k };
   return game._pacing;
 }
 // ¿Está en el bando del jugador (él o sus compañeros)?
